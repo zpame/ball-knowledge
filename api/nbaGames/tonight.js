@@ -69,6 +69,32 @@ function teamsFromGames(games) {
   return [...teams.values()]
 }
 
+function cacheIsFresh(cache, date) {
+  if (!cache?.payload || !cache.last_requested_at) return false
+  if (cache.payload.date !== date) return false
+  return Date.now() - new Date(cache.last_requested_at).getTime() < 60_000
+}
+
+function sendPayload(res, payload, cacheStatus) {
+  res.setHeader('Cache-Control', 'no-store')
+  res.setHeader('X-NBA-Cache', cacheStatus)
+  return res.status(200).json(payload)
+}
+
+async function readCache(supabase) {
+  const { data, error } = await supabase
+    .from('nba_games_cache')
+    .select('payload, last_requested_at')
+    .eq('cache_key', 'games')
+    .maybeSingle()
+  if (error) throw error
+  return data
+}
+
+function wait(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'GET') {
     res.setHeader('Allow', 'GET')
@@ -82,6 +108,25 @@ export default async function handler(req, res) {
 
   try {
     const date = easternDate(new Date())
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { persistSession: false },
+    })
+    let cache = await readCache(supabase)
+    if (cacheIsFresh(cache, date)) return sendPayload(res, cache.payload, 'HIT')
+
+    const { data: claimed, error: claimError } = await supabase.rpc('claim_nba_games_refresh')
+    if (claimError) throw claimError
+    if (!claimed) {
+      if (cache?.payload) return sendPayload(res, cache.payload, 'STALE')
+
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        await wait(250)
+        cache = await readCache(supabase)
+        if (cache?.payload) return sendPayload(res, cache.payload, 'WAIT')
+      }
+      return res.status(503).json({ error: 'NBA games are being refreshed. Please try again shortly.' })
+    }
+
     const dates = recentDates(date)
     const url = new URL('https://api.balldontlie.io/v1/games')
     for (const day of dates) url.searchParams.append('dates[]', day)
@@ -93,6 +138,7 @@ export default async function handler(req, res) {
     if (!response.ok) {
       const detail = await response.text()
       console.error(`BallDontLie returned ${response.status}: ${detail}`)
+      if (cache?.payload) return sendPayload(res, cache.payload, 'STALE')
       return res.status(502).json({ error: 'Unable to load NBA games right now' })
     }
 
@@ -103,9 +149,6 @@ export default async function handler(req, res) {
       console.error('BallDontLie returned a game without a scheduled start time')
     }
 
-    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-      auth: { persistSession: false },
-    })
     const teams = teamsFromGames(validGames)
     if (teams.length) {
       const { error } = await supabase.from('teams').upsert(teams, { onConflict: 'id' })
@@ -127,12 +170,18 @@ export default async function handler(req, res) {
       if (error) throw error
     }
 
-    res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate=30')
-    return res.status(200).json({
+    const payloadToCache = {
       date,
       games: validGames.sort((gameA, gameB) => gameA.datetime.localeCompare(gameB.datetime)),
       teams,
-    })
+    }
+    const { error: cacheError } = await supabase
+      .from('nba_games_cache')
+      .update({ payload: payloadToCache })
+      .eq('cache_key', 'games')
+    if (cacheError) throw cacheError
+
+    return sendPayload(res, payloadToCache, 'MISS')
   } catch (error) {
     console.error('Failed to sync tonight’s NBA games:', error)
     return res.status(500).json({ error: 'Unable to load NBA games right now' })
