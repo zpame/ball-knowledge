@@ -51,6 +51,9 @@ const myRecords = ref<LeaderboardEntry[]>([])
 const user = ref<User | null>(null)
 const activePage = ref<'home' | 'games' | 'profile' | 'leaderboard'>('home')
 const activePeriod = ref<LeaderboardPeriod>('week')
+const leaderboardSearch = ref('')
+const leaderboardPageSize = ref<25 | 50 | 100>(25)
+const leaderboardPage = ref(1)
 const loadingGames = ref(true)
 const loadingLeaders = ref(true)
 const submittingGame = ref<number | null>(null)
@@ -68,6 +71,24 @@ const currentDate = new Intl.DateTimeFormat('en-US', {
 const todayGames = computed(() => games.value.filter((game) => game.date === slateDate.value))
 const homeGames = computed(() => todayGames.value.slice(0, 3))
 const homeLeaders = computed(() => leaders.value.slice(0, 5))
+const filteredLeaders = computed(() => {
+  const query = leaderboardSearch.value.trim().toLocaleLowerCase()
+  return query
+    ? leaders.value.filter((entry) => entry.display_name.toLocaleLowerCase().includes(query))
+    : leaders.value
+})
+const leaderboardPageCount = computed(() => Math.max(1, Math.ceil(filteredLeaders.value.length / leaderboardPageSize.value)))
+const pagedLeaders = computed(() => {
+  const start = (leaderboardPage.value - 1) * leaderboardPageSize.value
+  return filteredLeaders.value.slice(start, start + leaderboardPageSize.value)
+})
+const leaderboardFirstRow = computed(() => filteredLeaders.value.length
+  ? (leaderboardPage.value - 1) * leaderboardPageSize.value + 1
+  : 0)
+const leaderboardLastRow = computed(() => Math.min(
+  leaderboardPage.value * leaderboardPageSize.value,
+  filteredLeaders.value.length,
+))
 const allTimeRecord = computed(() => myRecords.value.find((entry) => entry.period === 'all_time'))
 const seasonRecord = computed(() => myRecords.value.find((entry) => entry.period === 'season'))
 const weeklyRecord = computed(() => myRecords.value.find((entry) => entry.period === 'week'))
@@ -95,6 +116,10 @@ const gameDays = computed(() => {
 let authSubscription: { unsubscribe: () => void } | undefined
 let gameRefreshInterval: number | undefined
 let errorTimeout: number | undefined
+
+watch([leaderboardSearch, leaderboardPageSize, activePeriod], () => {
+  leaderboardPage.value = 1
+})
 
 watch(errorMessage, (message) => {
   if (errorTimeout !== undefined) window.clearTimeout(errorTimeout)
@@ -539,12 +564,16 @@ onUnmounted(() => {
                 {{ period === 'all_time' ? 'All time' : period === 'season' ? 'This season' : 'This week' }}
               </button>
             </div>
+            <label class="leaderboard-search">
+              <span class="visually-hidden">Search leaderboard players</span>
+              <input v-model="leaderboardSearch" type="search" placeholder="Search players" autocomplete="off" />
+            </label>
           </div>
           <div class="table-scroll">
             <table>
               <thead><tr><th>RANK</th><th>PLAYER</th><th>RECORD</th><th>WIN %</th><th>CURRENT STREAK</th><th>PICKS</th></tr></thead>
-              <tbody v-if="!loadingLeaders && leaders.length">
-                <tr v-for="entry in leaders" :key="entry.user_id" :class="{ 'current-player': user?.id === entry.user_id }">
+              <tbody v-if="!loadingLeaders && pagedLeaders.length">
+                <tr v-for="entry in pagedLeaders" :key="entry.user_id" :class="{ 'current-player': user?.id === entry.user_id }">
                   <td><span class="rank-number" :class="{ 'top-rank': entry.rank <= 3 }">{{ String(entry.rank).padStart(2, '0') }}</span></td>
                   <td class="player-cell"><strong>{{ entry.display_name }}<span v-if="user?.id === entry.user_id" class="you-label">You</span></strong></td>
                   <td>{{ entry.wins }}<span class="record-separator">—</span>{{ entry.losses }}</td>
@@ -556,7 +585,25 @@ onUnmounted(() => {
             </table>
           </div>
           <div v-if="loadingLeaders" class="leaderboard-empty">Loading…</div>
-          <div v-else-if="!leaders.length" class="leaderboard-empty">No results for this period yet.</div>
+          <div v-else-if="!filteredLeaders.length" class="leaderboard-empty">
+            {{ leaders.length ? 'No players match your search.' : 'No results for this period yet.' }}
+          </div>
+          <footer v-if="!loadingLeaders && filteredLeaders.length" class="leaderboard-footer">
+            <span class="leaderboard-count">Showing {{ leaderboardFirstRow }}–{{ leaderboardLastRow }} of {{ filteredLeaders.length }}</span>
+            <label class="page-size-control">
+              Rows per page
+              <select v-model.number="leaderboardPageSize">
+                <option :value="25">25</option>
+                <option :value="50">50</option>
+                <option :value="100">100</option>
+              </select>
+            </label>
+            <div class="page-navigation" aria-label="Leaderboard pagination">
+              <button class="page-button" :disabled="leaderboardPage === 1" @click="leaderboardPage -= 1">Previous</button>
+              <span>Page {{ leaderboardPage }} of {{ leaderboardPageCount }}</span>
+              <button class="page-button" :disabled="leaderboardPage >= leaderboardPageCount" @click="leaderboardPage += 1">Next</button>
+            </div>
+          </footer>
         </div>
       </section>
     </main>

@@ -132,10 +132,13 @@ main { width: min(100% - 48px, 1160px); margin: 0 auto; }
 .leaderboard-section { border-top: 1px solid var(--line); }
 .leaderboard-section .section-heading { margin-bottom: 16px; }
 .leaderboard-panel { border: 1px solid var(--line); border-radius: 7px; background: var(--panel); overflow: hidden; }
-.leaderboard-top { display: flex; align-items: center; justify-content: space-between; padding: 14px; border-bottom: 1px solid var(--line); }
+.leaderboard-top { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px; border-bottom: 1px solid var(--line); }
 .period-tabs { display: flex; gap: 4px; }
 .period-tabs button { border: 1px solid transparent; border-radius: 4px; background: transparent; padding: 10px 13px; color: var(--muted); font-size: 13px; cursor: pointer; }
 .period-tabs button.active { border-color: #424a36; background: #252a20; color: var(--accent); }
+.leaderboard-search { width: min(100%, 260px); }
+.leaderboard-search input { width: 100%; min-height: 38px; padding: 8px 11px; border: 1px solid #3b4136; border-radius: 4px; outline: 0; background: #10120f; color: #f2f3ec; font-size: 13px; }
+.leaderboard-search input:focus { border-color: var(--accent); }
 .table-scroll { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; min-width: 540px; text-align: left; }
 thead { background: #1d201b; }
@@ -152,6 +155,12 @@ tbody tr.current-player { background: #20251a; }
 .win-streak { background: #29351e; color: var(--accent); }
 .loss-streak { background: #35231e; color: #e99a82; }
 .leaderboard-empty { min-height: 112px; display: grid; place-items: center; color: var(--muted); font-size: 14px; }
+.leaderboard-footer { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.page-size-control, .page-navigation { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.page-size-control select { min-height: 32px; padding: 5px 25px 5px 8px; border: 1px solid #3b4136; border-radius: 4px; background: #10120f; color: #f2f3ec; font: inherit; }
+.page-button { min-height: 32px; padding: 5px 9px; border: 1px solid #3b4136; border-radius: 4px; background: transparent; color: #d1d4cd; font: inherit; cursor: pointer; }
+.page-button:disabled { opacity: .45; cursor: not-allowed; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 .modal-backdrop { position: fixed; z-index: 10; inset: 0; display: grid; place-items: center; padding: 20px; background: #050605c9; }
 .auth-modal { width: min(100%, 380px); position: relative; padding: 26px; border: 1px solid #454941; border-radius: 8px; background: #191b18; }
@@ -200,8 +209,12 @@ tbody tr.current-player { background: #20251a; }
   .profile-pick-outcome { grid-column: 2; grid-row: 1 / span 2; justify-items: end; text-align: right; }
   .pick-actions { grid-template-columns: 1fr; }
   .pick-button { min-height: 42px; padding: 10px 12px; }
-  .leaderboard-top { align-items: stretch; }
+  .leaderboard-top { align-items: stretch; flex-direction: column; }
   .period-tabs { width: 100%; }
   .period-tabs button { flex: 1; padding: 8px 5px; }
+  .leaderboard-search { width: 100%; }
+  .leaderboard-footer { align-items: flex-start; flex-wrap: wrap; }
+  .leaderboard-count { width: 100%; }
+  .page-navigation { margin-left: auto; }
   .auth-modal { padding: 23px; }
 }
