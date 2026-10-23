@@ -19,15 +19,20 @@ export default defineConfig(({ mode }) => {
       {
         name: 'local-nba-games-function',
         configureServer(server) {
-          server.middlewares.use('/api/nbaGames/tonight', async (request, response, next) => {
-            try {
-              const module = await server.ssrLoadModule('/api/nbaGames/tonight.js')
-              const vercelResponse = createVercelResponse(response)
-              await module.default(request, vercelResponse)
-            } catch (error) {
-              next(error instanceof Error ? error : new Error(String(error)))
-            }
-          })
+          for (const [path, handlerFile] of [
+            ['/api/nbaGames/tonight', '/api/nbaGames/tonight.js'],
+            ['/api/usernames/claim', '/api/usernames/claim.js'],
+          ]) {
+            server.middlewares.use(path, async (request, response, next) => {
+              try {
+                const module = await server.ssrLoadModule(handlerFile)
+                const vercelResponse = createVercelResponse(response)
+                await module.default(request, vercelResponse)
+              } catch (error) {
+                next(error instanceof Error ? error : new Error(String(error)))
+              }
+            })
+          }
         },
       },
     ],

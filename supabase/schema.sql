@@ -286,5 +286,5 @@ create policy "Users read their own picks"
 
 grant select on public.profiles, public.teams, public.games to anon, authenticated;
 grant select on public.picks to authenticated;
-grant update (username, display_name) on public.profiles to authenticated;
+revoke update (username, display_name) on public.profiles from authenticated;
 grant select on public.leaderboard to anon, authenticated;

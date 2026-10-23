@@ -49,6 +49,11 @@ const picks = ref<Pick[]>([])
 const leaders = ref<LeaderboardEntry[]>([])
 const myRecords = ref<LeaderboardEntry[]>([])
 const user = ref<User | null>(null)
+const currentUsername = ref('')
+const usernameSetupOpen = ref(false)
+const usernameInput = ref('')
+const usernameSaving = ref(false)
+const usernameError = ref('')
 const activePage = ref<'home' | 'games' | 'profile' | 'leaderboard'>('home')
 const activePeriod = ref<LeaderboardPeriod>('week')
 const leaderboardSearch = ref('')
@@ -116,6 +121,7 @@ const gameDays = computed(() => {
 let authSubscription: { unsubscribe: () => void } | undefined
 let gameRefreshInterval: number | undefined
 let errorTimeout: number | undefined
+let checkingProfileUserId: string | undefined
 
 watch([leaderboardSearch, leaderboardPageSize, activePeriod], () => {
   leaderboardPage.value = 1
@@ -274,6 +280,89 @@ async function signInWithGoogle() {
   }
 }
 
+async function checkUsernameSetup() {
+  if (!supabase || !user.value || checkingProfileUserId === user.value.id) return
+  const userId = user.value.id
+  checkingProfileUserId = userId
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('username, display_name')
+      .eq('id', userId)
+      .maybeSingle()
+    if (error) {
+      errorMessage.value = `Could not load your profile: ${error.message}`
+      return
+    }
+    if (user.value?.id !== userId) return
+
+    const username = data?.username?.trim() ?? ''
+    const displayName = data?.display_name?.trim() ?? ''
+    currentUsername.value = username || displayName
+    if (!username || username.toLowerCase() === 'player' || displayName.toLowerCase() === 'player') {
+      usernameInput.value = ''
+      usernameError.value = ''
+      usernameSetupOpen.value = true
+    }
+  } catch (error) {
+    errorMessage.value = error instanceof Error
+      ? `Could not load your profile: ${error.message}`
+      : 'Could not load your profile.'
+  } finally {
+    if (checkingProfileUserId === userId) checkingProfileUserId = undefined
+  }
+}
+
+async function saveUsername() {
+  if (!supabase || !user.value || usernameSaving.value) return
+  const username = usernameInput.value.trim()
+  usernameError.value = ''
+  if (!/^[A-Za-z0-9][A-Za-z0-9 ._-]{1,18}[A-Za-z0-9]$/.test(username)) {
+    usernameError.value = 'Use 3–20 characters. Letters, numbers, spaces, periods, underscores and hyphens are allowed.'
+    return
+  }
+
+  usernameSaving.value = true
+  try {
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
+    if (sessionError) throw sessionError
+    if (!sessionData.session) {
+      usernameError.value = 'Your sign-in expired. Sign in with Google again.'
+      return
+    }
+
+    const response = await fetch('/api/usernames/claim', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${sessionData.session.access_token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ username }),
+    })
+    const payload = await response.json()
+    if (!response.ok) {
+      const messages: Record<string, string> = {
+        username_invalid: 'Use 3–20 characters. Letters, numbers, spaces, periods, underscores and hyphens are allowed.',
+        username_profanity: 'Please choose a username without profanity.',
+        username_taken: 'That username is already taken. Try another one.',
+        not_authenticated: 'Your sign-in expired. Sign in with Google again.',
+      }
+      usernameError.value = messages[payload.error] || 'Could not save your username. Please try again.'
+      return
+    }
+
+    currentUsername.value = payload.username
+    usernameSetupOpen.value = false
+    usernameInput.value = ''
+    noticeMessage.value = 'Your username is set.'
+    await Promise.all([loadMyRecords(), loadLeaders()])
+  } catch (error) {
+    usernameError.value = error instanceof Error ? error.message : 'Could not save your username. Please try again.'
+  } finally {
+    usernameSaving.value = false
+  }
+}
+
 async function signOut() {
   if (!supabase) return
   const { error } = await supabase.auth.signOut()
@@ -282,6 +371,11 @@ async function signOut() {
     return
   }
   user.value = null
+  currentUsername.value = ''
+  usernameSetupOpen.value = false
+  usernameInput.value = ''
+  usernameError.value = ''
+  checkingProfileUserId = undefined
   picks.value = []
   myRecords.value = []
   noticeMessage.value = 'You’re signed out.'
@@ -381,9 +475,18 @@ onMounted(async () => {
   if (supabase) {
     const { data } = await supabase.auth.getSession()
     user.value = data.session?.user ?? null
+    if (user.value) void checkUsernameSetup()
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       user.value = session?.user ?? null
-      window.setTimeout(() => void loadAccountData(), 0)
+      if (!user.value) {
+        currentUsername.value = ''
+        usernameSetupOpen.value = false
+        checkingProfileUserId = undefined
+      }
+      window.setTimeout(() => {
+        void loadAccountData()
+        void checkUsernameSetup()
+      }, 0)
     })
     authSubscription = listener.subscription
   }
@@ -409,7 +512,7 @@ onUnmounted(() => {
       </nav>
       <div class="account-actions">
         <template v-if="user">
-          <span class="signed-in">{{ user.user_metadata.display_name || user.email }}</span>
+          <span class="signed-in">{{ currentUsername || user.user_metadata.display_name || user.email }}</span>
           <button class="button button-quiet" @click="signOut">Sign out</button>
         </template>
         <button v-else class="button button-outline" @click="openAuth">Sign in</button>
@@ -504,7 +607,7 @@ onUnmounted(() => {
       </section>
 
       <section v-else-if="activePage === 'profile'" class="section profile-page">
-        <div class="section-heading"><div><h1>My Profile</h1><p class="page-subtitle">{{ user?.user_metadata.display_name || user?.email || 'Your picks and results' }}</p></div></div>
+        <div class="section-heading"><div><h1>My Profile</h1><p class="page-subtitle">{{ currentUsername || user?.user_metadata.display_name || user?.email || 'Your picks and results' }}</p></div></div>
         <div v-if="!user" class="empty-state profile-signin"><p>Sign in to see your stats and picks.</p><button class="button button-lime" @click="openAuth">Sign in</button></div>
         <template v-else>
           <div class="record-grid">
@@ -623,6 +726,33 @@ onUnmounted(() => {
           </svg>
           {{ authBusy ? 'Connecting…' : 'Continue with Google' }}
         </button>
+      </section>
+    </div>
+
+    <div v-if="usernameSetupOpen && user" class="modal-backdrop username-backdrop">
+      <section class="auth-modal username-modal" role="dialog" aria-modal="true" aria-labelledby="username-title">
+        <h2 id="username-title">Choose your username</h2>
+        <p class="auth-description">This is how you’ll appear on the leaderboard. Choose a unique name.</p>
+        <form @submit.prevent="saveUsername">
+          <label class="username-label">
+            Username
+            <input
+              v-model="usernameInput"
+              type="text"
+              autocomplete="username"
+              minlength="3"
+              maxlength="20"
+              pattern="[A-Za-z0-9][A-Za-z0-9 ._-]{1,18}[A-Za-z0-9]"
+              required
+              autofocus
+            />
+          </label>
+          <p class="username-hint">3–20 characters. Use letters, numbers, spaces, periods, underscores or hyphens.</p>
+          <p v-if="usernameError" class="form-error" role="alert">{{ usernameError }}</p>
+          <button class="button button-lime submit-button" :disabled="usernameSaving">
+            {{ usernameSaving ? 'Saving…' : 'Save username' }}
+          </button>
+        </form>
       </section>
     </div>
   </div>

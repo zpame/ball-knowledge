@@ -172,6 +172,13 @@ tbody tr.current-player { background: #20251a; }
 .google-signin-button:hover:not(:disabled) { background: #f2f4f7; }
 .google-signin-button:disabled { cursor: wait; opacity: .7; }
 .google-signin-button svg { width: 18px; height: 18px; }
+.username-backdrop { z-index: 11; }
+.username-modal form { display: grid; gap: 12px; }
+.username-label { display: grid; gap: 7px; color: #aeb2a8; font-size: 12px; }
+.username-label input { width: 100%; min-height: 42px; padding: 10px; border: 1px solid #3b4136; border-radius: 4px; outline: 0; background: #10120f; color: #f2f3ec; font-size: 14px; }
+.username-label input:focus { border-color: var(--accent); }
+.username-hint { margin: -4px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.submit-button { width: 100%; margin-top: 3px; }
 
 @media (max-width: 760px) {
   .game-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
