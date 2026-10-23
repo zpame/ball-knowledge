@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { supabase, supabaseConfigured } from './lib/supabase'
 import type { User } from '@supabase/supabase-js'
 
@@ -55,7 +55,7 @@ const loadingGames = ref(true)
 const loadingLeaders = ref(true)
 const submittingGame = ref<number | null>(null)
 const authBusy = ref(false)
-const authMode = ref<'signin' | 'signup'>('signin')
+const authMode = ref<'signin' | 'signup' | 'forgot' | 'updatePassword'>('signin')
 const authOpen = ref(false)
 const email = ref('')
 const password = ref('')
@@ -101,6 +101,23 @@ const gameDays = computed(() => {
 
 let authSubscription: { unsubscribe: () => void } | undefined
 let gameRefreshInterval: number | undefined
+let errorTimeout: number | undefined
+
+watch(errorMessage, (message) => {
+  if (errorTimeout !== undefined) window.clearTimeout(errorTimeout)
+  if (message) {
+    errorTimeout = window.setTimeout(() => {
+      errorMessage.value = ''
+      errorTimeout = undefined
+    }, 7000)
+  }
+})
+
+function authRedirectUrl() {
+  const hostname = window.location.hostname
+  if (hostname === 'localhost' || hostname === '127.0.0.1') return window.location.origin
+  return 'https://ballknowledge.zacharypamer.com'
+}
 
 async function loadGames() {
   loadingGames.value = true
@@ -235,7 +252,7 @@ async function resendConfirmation() {
   const { error } = await supabase.auth.resend({
     type: 'signup',
     email: address,
-    options: { emailRedirectTo: window.location.origin },
+    options: { emailRedirectTo: authRedirectUrl() },
   })
   authBusy.value = false
   if (error) {
@@ -251,19 +268,49 @@ async function submitAuth() {
   authErrorMessage.value = ''
   authNotice.value = ''
   noticeMessage.value = ''
-  if (authMode.value === 'signup' && password.value !== confirmPassword.value) {
+  if ((authMode.value === 'signup' || authMode.value === 'updatePassword')
+    && password.value !== confirmPassword.value) {
     authErrorMessage.value = 'Passwords do not match.'
     return
   }
 
   authBusy.value = true
-  const result = authMode.value === 'signup'
+  if (authMode.value === 'forgot') {
+    const { error } = await supabase.auth.resetPasswordForEmail(email.value.trim(), {
+      redirectTo: authRedirectUrl(),
+    })
+    authBusy.value = false
+    if (error) {
+      authErrorMessage.value = error.message
+    } else {
+      authNotice.value = 'If an account exists for that email, a password reset link is on its way.'
+    }
+    return
+  }
+
+  if (authMode.value === 'updatePassword') {
+    const { error } = await supabase.auth.updateUser({ password: password.value })
+    authBusy.value = false
+    if (error) {
+      authErrorMessage.value = error.message
+    } else {
+      authOpen.value = false
+      authMode.value = 'signin'
+      password.value = ''
+      confirmPassword.value = ''
+      noticeMessage.value = 'Your password has been updated.'
+    }
+    return
+  }
+
+  const signingUp = authMode.value === 'signup'
+  const result = signingUp
     ? await supabase.auth.signUp({
         email: email.value,
         password: password.value,
         options: {
           data: { display_name: displayName.value.trim() || 'Player' },
-          emailRedirectTo: window.location.origin,
+          emailRedirectTo: authRedirectUrl(),
         },
       })
     : await supabase.auth.signInWithPassword({ email: email.value, password: password.value })
@@ -272,10 +319,16 @@ async function submitAuth() {
     if (result.error.code === 'email_not_confirmed') {
       confirmationPending.value = true
       authErrorMessage.value = 'Your email is not confirmed yet. Resend the confirmation link below.'
+    } else if (signingUp && (result.error.code === 'user_already_exists'
+      || result.error.code === '23505'
+      || /already (registered|exists)|duplicate key/i.test(result.error.message))) {
+      authErrorMessage.value = 'An account with that email or username already exists. Sign in or use Forgot password.'
     } else {
       authErrorMessage.value = result.error.message
     }
-  } else if (authMode.value === 'signup' && !result.data.session) {
+  } else if (signingUp && result.data.user?.identities?.length === 0) {
+    authErrorMessage.value = 'An account with that email already exists. Sign in or use Forgot password.'
+  } else if (signingUp && !result.data.session) {
     confirmationPending.value = true
     authNotice.value = 'Check your inbox for a confirmation link.'
   } else {
@@ -303,6 +356,7 @@ async function signOut() {
 }
 
 function navigateTo(page: 'home' | 'games' | 'profile' | 'leaderboard') {
+  errorMessage.value = ''
   activePage.value = page
   const url = new URL(window.location.href)
   if (page === 'home') url.searchParams.delete('page')
@@ -313,7 +367,9 @@ function navigateTo(page: 'home' | 'games' | 'profile' | 'leaderboard') {
 
 function syncRoute() {
   const page = new URLSearchParams(window.location.search).get('page')
-  activePage.value = page === 'games' || page === 'profile' || page === 'leaderboard' ? page : 'home'
+  const nextPage = page === 'games' || page === 'profile' || page === 'leaderboard' ? page : 'home'
+  if (nextPage !== activePage.value) errorMessage.value = ''
+  activePage.value = nextPage
 }
 
 function formatGameDate(date: string) {
@@ -376,6 +432,11 @@ onMounted(async () => {
   syncRoute()
   window.addEventListener('popstate', syncRoute)
   const authError = new URLSearchParams(window.location.hash.slice(1))
+  if (authError.get('type') === 'recovery') {
+    authMode.value = 'updatePassword'
+    authOpen.value = true
+    authNotice.value = 'Choose a new password for your account.'
+  }
   if (authError.has('error')) {
     confirmationPending.value = true
     authMode.value = 'signin'
@@ -404,6 +465,7 @@ onUnmounted(() => {
   window.removeEventListener('popstate', syncRoute)
   authSubscription?.unsubscribe()
   if (gameRefreshInterval !== undefined) window.clearInterval(gameRefreshInterval)
+  if (errorTimeout !== undefined) window.clearTimeout(errorTimeout)
 })
 </script>
 
@@ -598,24 +660,25 @@ onUnmounted(() => {
     <div v-if="authOpen" class="modal-backdrop" @click.self="authOpen = false">
       <section class="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title">
         <button class="modal-close" aria-label="Close sign-in dialog" @click="authOpen = false">×</button>
-        <h2 id="auth-title">{{ authMode === 'signin' ? 'Sign in' : 'Create account' }}</h2>
+        <h2 id="auth-title">{{ authMode === 'signin' ? 'Sign in' : authMode === 'signup' ? 'Create account' : authMode === 'forgot' ? 'Reset password' : 'Choose a new password' }}</h2>
         <form @submit.prevent="submitAuth">
           <label v-if="authMode === 'signup'">Display name<input v-model="displayName" autocomplete="nickname" maxlength="40" required /></label>
-          <label>Email<input v-model="email" type="email" autocomplete="email" required /></label>
-          <label>Password<input v-model="password" type="password" :autocomplete="authMode === 'signin' ? 'current-password' : 'new-password'" minlength="6" required /></label>
-          <label v-if="authMode === 'signup'">Confirm password<input v-model="confirmPassword" type="password" autocomplete="new-password" minlength="6" required /></label>
+          <label v-if="authMode !== 'updatePassword'">Email<input v-model="email" type="email" autocomplete="email" required /></label>
+          <label v-if="authMode !== 'forgot'">Password<input v-model="password" type="password" :autocomplete="authMode === 'signin' ? 'current-password' : 'new-password'" minlength="6" required /></label>
+          <label v-if="authMode === 'signup' || authMode === 'updatePassword'">Confirm password<input v-model="confirmPassword" type="password" autocomplete="new-password" minlength="6" required /></label>
           <p v-if="authErrorMessage" class="form-error" role="alert">{{ authErrorMessage }}</p>
           <p v-if="authNotice" class="auth-notice" role="status">{{ authNotice }}</p>
-          <button class="button button-lime submit-button" :disabled="authBusy">{{ authBusy ? 'Please wait…' : authMode === 'signin' ? 'Sign in' : 'Create account' }}</button>
+          <button class="button button-lime submit-button" :disabled="authBusy">{{ authBusy ? 'Please wait…' : authMode === 'signin' ? 'Sign in' : authMode === 'signup' ? 'Create account' : authMode === 'forgot' ? 'Send reset link' : 'Update password' }}</button>
         </form>
+        <button v-if="authMode === 'signin'" class="mode-switch" :disabled="authBusy" @click="authMode = 'forgot'; authErrorMessage = ''; authNotice = ''">Forgot password?</button>
         <button
           v-if="confirmationPending && authMode === 'signin'"
           class="mode-switch"
           :disabled="authBusy"
           @click="resendConfirmation"
         >{{ authBusy ? 'Sending…' : 'Resend confirmation email' }}</button>
-        <button class="mode-switch" @click="authMode = authMode === 'signin' ? 'signup' : 'signin'; authErrorMessage = ''; authNotice = ''">
-          {{ authMode === 'signin' ? 'New to the board? Create an account' : 'Already have an account? Sign in' }}
+        <button v-if="authMode !== 'updatePassword'" class="mode-switch" :disabled="authBusy" @click="authMode = authMode === 'signup' || authMode === 'forgot' ? 'signin' : 'signup'; authErrorMessage = ''; authNotice = ''">
+          {{ authMode === 'signup' ? 'Already have an account? Sign in' : authMode === 'signin' ? 'New to the board? Create an account' : 'Back to sign in' }}
         </button>
       </section>
     </div>
