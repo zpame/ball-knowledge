@@ -50,11 +50,12 @@ const leaders = ref<LeaderboardEntry[]>([])
 const myRecords = ref<LeaderboardEntry[]>([])
 const user = ref<User | null>(null)
 const currentUsername = ref('')
+const usernameNextChangeAt = ref<string | null>(null)
 const usernameSetupOpen = ref(false)
 const usernameInput = ref('')
 const usernameSaving = ref(false)
 const usernameError = ref('')
-const activePage = ref<'home' | 'games' | 'profile' | 'leaderboard'>('home')
+const activePage = ref<'home' | 'games' | 'profile' | 'leaderboard' | 'settings'>('home')
 const activePeriod = ref<LeaderboardPeriod>('week')
 const leaderboardSearch = ref('')
 const leaderboardPageSize = ref<25 | 50 | 100>(25)
@@ -73,6 +74,11 @@ const currentDate = new Intl.DateTimeFormat('en-US', {
   day: 'numeric',
   timeZone: 'America/New_York',
 }).format(new Date())
+const usernameChangeAvailable = computed(() => !usernameNextChangeAt.value
+  || new Date(usernameNextChangeAt.value).getTime() <= Date.now())
+const usernameChangeDate = computed(() => usernameNextChangeAt.value
+  ? new Intl.DateTimeFormat('en-US', { dateStyle: 'long', timeStyle: 'short' }).format(new Date(usernameNextChangeAt.value))
+  : '')
 const todayGames = computed(() => games.value.filter((game) => game.date === slateDate.value))
 const homeGames = computed(() => todayGames.value.slice(0, 3))
 const homeLeaders = computed(() => leaders.value.slice(0, 5))
@@ -287,7 +293,7 @@ async function checkUsernameSetup() {
   try {
     const { data, error } = await supabase
       .from('profiles')
-      .select('username, display_name')
+      .select('username, display_name, username_changed_at')
       .eq('id', userId)
       .maybeSingle()
     if (error) {
@@ -299,6 +305,9 @@ async function checkUsernameSetup() {
     const username = data?.username?.trim() ?? ''
     const displayName = data?.display_name?.trim() ?? ''
     currentUsername.value = username || displayName
+    usernameNextChangeAt.value = data?.username_changed_at
+      ? new Date(new Date(data.username_changed_at).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString()
+      : null
     if (!username || username.toLowerCase() === 'player' || displayName.toLowerCase() === 'player') {
       usernameInput.value = ''
       usernameError.value = ''
@@ -347,11 +356,20 @@ async function saveUsername() {
         username_taken: 'That username is already taken. Try another one.',
         not_authenticated: 'Your sign-in expired. Sign in with Google again.',
       }
-      usernameError.value = messages[payload.error] || 'Could not save your username. Please try again.'
+      if (payload.error === 'username_cooldown' && payload.next_available_at) {
+        usernameNextChangeAt.value = payload.next_available_at
+        usernameError.value = `You can change your username again on ${new Intl.DateTimeFormat('en-US', {
+          dateStyle: 'long',
+          timeStyle: 'short',
+        }).format(new Date(payload.next_available_at))}.`
+      } else {
+        usernameError.value = messages[payload.error] || 'Could not save your username. Please try again.'
+      }
       return
     }
 
     currentUsername.value = payload.username
+    usernameNextChangeAt.value = payload.next_change_at
     usernameSetupOpen.value = false
     usernameInput.value = ''
     noticeMessage.value = 'Your username is set.'
@@ -372,6 +390,7 @@ async function signOut() {
   }
   user.value = null
   currentUsername.value = ''
+  usernameNextChangeAt.value = null
   usernameSetupOpen.value = false
   usernameInput.value = ''
   usernameError.value = ''
@@ -381,7 +400,7 @@ async function signOut() {
   noticeMessage.value = 'You’re signed out.'
 }
 
-function navigateTo(page: 'home' | 'games' | 'profile' | 'leaderboard') {
+function navigateTo(page: 'home' | 'games' | 'profile' | 'leaderboard' | 'settings') {
   errorMessage.value = ''
   activePage.value = page
   const url = new URL(window.location.href)
@@ -393,7 +412,9 @@ function navigateTo(page: 'home' | 'games' | 'profile' | 'leaderboard') {
 
 function syncRoute() {
   const page = new URLSearchParams(window.location.search).get('page')
-  const nextPage = page === 'games' || page === 'profile' || page === 'leaderboard' ? page : 'home'
+  const nextPage = page === 'games' || page === 'profile' || page === 'leaderboard' || page === 'settings'
+    ? page
+    : 'home'
   if (nextPage !== activePage.value) errorMessage.value = ''
   activePage.value = nextPage
 }
@@ -512,7 +533,13 @@ onUnmounted(() => {
       </nav>
       <div class="account-actions">
         <template v-if="user">
-          <span class="signed-in">{{ currentUsername || user.user_metadata.display_name || user.email }}</span>
+          <button
+            class="signed-in account-link"
+            type="button"
+            aria-label="Open account settings"
+            title="Account settings"
+            @click="navigateTo('settings')"
+          >{{ currentUsername || user.user_metadata.display_name || user.email }}</button>
           <button class="button button-quiet" @click="signOut">Sign out</button>
         </template>
         <button v-else class="button button-outline" @click="openAuth">Sign in</button>
@@ -656,6 +683,56 @@ onUnmounted(() => {
             <p v-else class="panel-note">No recent picks.</p>
           </section>
         </template>
+      </section>
+
+      <section v-else-if="activePage === 'settings'" class="section settings-page">
+        <div class="section-heading">
+          <div><h1>Account settings</h1><p class="page-subtitle">Manage your Ball Knowledge account</p></div>
+        </div>
+        <template v-if="user">
+          <section class="settings-card overview-panel">
+            <div class="panel-heading"><h2>Username</h2></div>
+            <div class="settings-value">
+              <span>Current username</span>
+              <strong>{{ currentUsername || 'Not set' }}</strong>
+            </div>
+            <p v-if="!usernameChangeAvailable" class="panel-note">
+              You can change your username once every 30 days. Your next change is available {{ usernameChangeDate }}.
+            </p>
+            <template v-else>
+              <p class="panel-note">You can change your username once every 30 days. Names must be unique and follow the username rules.</p>
+              <form class="settings-form" @submit.prevent="saveUsername">
+                <label class="username-label">
+                  New username
+                  <input
+                    v-model="usernameInput"
+                    type="text"
+                    autocomplete="username"
+                    minlength="3"
+                    maxlength="20"
+                    pattern="[A-Za-z0-9][A-Za-z0-9 ._-]{1,18}[A-Za-z0-9]"
+                    required
+                  />
+                </label>
+                <p class="username-hint">3–20 characters. Use letters, numbers, spaces, periods, underscores or hyphens.</p>
+                <p v-if="usernameError" class="form-error" role="alert">{{ usernameError }}</p>
+                <button class="button button-lime submit-button" :disabled="usernameSaving">
+                  {{ usernameSaving ? 'Saving…' : 'Save username' }}
+                </button>
+              </form>
+            </template>
+          </section>
+          <section class="settings-card overview-panel">
+            <div class="panel-heading"><h2>Account</h2></div>
+            <div class="settings-value"><span>Signed in with</span><strong>Google</strong></div>
+            <div class="settings-value"><span>Email</span><strong>{{ user.email }}</strong></div>
+            <button class="button button-outline settings-signout" @click="signOut">Sign out</button>
+          </section>
+        </template>
+        <div v-else class="empty-state profile-signin">
+          <p>Sign in to manage your account settings.</p>
+          <button class="button button-lime" @click="openAuth">Sign in with Google</button>
+        </div>
       </section>
 
       <section v-else class="section leaderboard-page">

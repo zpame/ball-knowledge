@@ -69,10 +69,16 @@ export default async function handler(req, res) {
       if (error.message.includes('profile_not_found')) {
         return sendJson(res, 404, { error: 'profile_not_found' })
       }
+      if (error.message.includes('username_cooldown')) {
+        return sendJson(res, 429, {
+          error: 'username_cooldown',
+          next_available_at: error.details,
+        })
+      }
       throw error
     }
 
-    return sendJson(res, 200, { username: data })
+    return sendJson(res, 200, data)
   } catch (error) {
     console.error('Failed to save username:', error)
     return sendJson(res, 500, { error: 'username_save_failed' })
