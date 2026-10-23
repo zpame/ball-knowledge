@@ -55,17 +55,10 @@ const loadingGames = ref(true)
 const loadingLeaders = ref(true)
 const submittingGame = ref<number | null>(null)
 const authBusy = ref(false)
-const authMode = ref<'signin' | 'signup' | 'forgot' | 'updatePassword'>('signin')
 const authOpen = ref(false)
-const email = ref('')
-const password = ref('')
-const confirmPassword = ref('')
-const displayName = ref('')
 const errorMessage = ref('')
 const authErrorMessage = ref('')
 const noticeMessage = ref('')
-const confirmationPending = ref(false)
-const authNotice = ref('')
 const currentDate = new Intl.DateTimeFormat('en-US', {
   weekday: 'long',
   month: 'long',
@@ -234,111 +227,25 @@ function openAuth() {
     return
   }
   authErrorMessage.value = ''
-  authNotice.value = ''
   authOpen.value = true
 }
 
-async function resendConfirmation() {
+async function signInWithGoogle() {
   if (!supabase) return
-  const address = email.value.trim()
-  if (!address) {
-    authErrorMessage.value = 'Enter your email address first.'
-    return
-  }
-
   authBusy.value = true
   authErrorMessage.value = ''
-  authNotice.value = ''
-  const { error } = await supabase.auth.resend({
-    type: 'signup',
-    email: address,
-    options: { emailRedirectTo: authRedirectUrl() },
-  })
-  authBusy.value = false
-  if (error) {
-    authErrorMessage.value = error.message
-  } else {
-    confirmationPending.value = true
-    authNotice.value = 'A new confirmation link has been sent. Check your inbox.'
-  }
-}
-
-async function submitAuth() {
-  if (!supabase) return
-  authErrorMessage.value = ''
-  authNotice.value = ''
-  noticeMessage.value = ''
-  if ((authMode.value === 'signup' || authMode.value === 'updatePassword')
-    && password.value !== confirmPassword.value) {
-    authErrorMessage.value = 'Passwords do not match.'
-    return
-  }
-
-  authBusy.value = true
-  if (authMode.value === 'forgot') {
-    const { error } = await supabase.auth.resetPasswordForEmail(email.value.trim(), {
-      redirectTo: authRedirectUrl(),
+  try {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: authRedirectUrl() },
     })
-    authBusy.value = false
     if (error) {
       authErrorMessage.value = error.message
-    } else {
-      authNotice.value = 'If an account exists for that email, a password reset link is on its way.'
     }
-    return
-  }
-
-  if (authMode.value === 'updatePassword') {
-    const { error } = await supabase.auth.updateUser({ password: password.value })
+  } catch (error) {
+    authErrorMessage.value = error instanceof Error ? error.message : 'Google sign-in could not be started.'
+  } finally {
     authBusy.value = false
-    if (error) {
-      authErrorMessage.value = error.message
-    } else {
-      authOpen.value = false
-      authMode.value = 'signin'
-      password.value = ''
-      confirmPassword.value = ''
-      noticeMessage.value = 'Your password has been updated.'
-    }
-    return
-  }
-
-  const signingUp = authMode.value === 'signup'
-  const result = signingUp
-    ? await supabase.auth.signUp({
-        email: email.value,
-        password: password.value,
-        options: {
-          data: { display_name: displayName.value.trim() || 'Player' },
-          emailRedirectTo: authRedirectUrl(),
-        },
-      })
-    : await supabase.auth.signInWithPassword({ email: email.value, password: password.value })
-  authBusy.value = false
-  if (result.error) {
-    if (result.error.code === 'email_not_confirmed') {
-      confirmationPending.value = true
-      authErrorMessage.value = 'Your email is not confirmed yet. Resend the confirmation link below.'
-    } else if (signingUp && (result.error.code === 'user_already_exists'
-      || result.error.code === '23505'
-      || /already (registered|exists)|duplicate key/i.test(result.error.message))) {
-      authErrorMessage.value = 'An account with that email or username already exists. Sign in or use Forgot password.'
-    } else {
-      authErrorMessage.value = result.error.message
-    }
-  } else if (signingUp && result.data.user?.identities?.length === 0) {
-    authErrorMessage.value = 'An account with that email already exists. Sign in or use Forgot password.'
-  } else if (signingUp && !result.data.session) {
-    confirmationPending.value = true
-    authNotice.value = 'Check your inbox for a confirmation link.'
-  } else {
-    user.value = result.data.user
-    authOpen.value = false
-    confirmationPending.value = false
-    password.value = ''
-    confirmPassword.value = ''
-    await Promise.all([loadPicks(), loadLeaders()])
-    noticeMessage.value = 'You’re signed in. Make your picks before tip-off.'
   }
 }
 
@@ -432,19 +339,16 @@ onMounted(async () => {
   syncRoute()
   window.addEventListener('popstate', syncRoute)
   const authError = new URLSearchParams(window.location.hash.slice(1))
-  if (authError.get('type') === 'recovery') {
-    authMode.value = 'updatePassword'
+  const queryParams = new URLSearchParams(window.location.search)
+  const authErrorDescription = authError.get('error_description') || queryParams.get('error_description')
+  if (authError.has('error') || queryParams.has('error')) {
     authOpen.value = true
-    authNotice.value = 'Choose a new password for your account.'
-  }
-  if (authError.has('error')) {
-    confirmationPending.value = true
-    authMode.value = 'signin'
-    authOpen.value = true
-    authErrorMessage.value = authError.get('error_code') === 'otp_expired'
-      ? 'That confirmation link has expired. Enter your email and request a new one.'
-      : authError.get('error_description') || 'That confirmation link could not be used. Request a new one.'
-    window.history.replaceState(null, document.title, window.location.pathname + window.location.search)
+    authErrorMessage.value = authErrorDescription || 'Google sign-in could not be completed. Please try again.'
+    queryParams.delete('error')
+    queryParams.delete('error_code')
+    queryParams.delete('error_description')
+    const search = queryParams.toString()
+    window.history.replaceState(null, document.title, `${window.location.pathname}${search ? `?${search}` : ''}`)
   }
 
   await loadGames()
@@ -660,25 +564,17 @@ onUnmounted(() => {
     <div v-if="authOpen" class="modal-backdrop" @click.self="authOpen = false">
       <section class="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title">
         <button class="modal-close" aria-label="Close sign-in dialog" @click="authOpen = false">×</button>
-        <h2 id="auth-title">{{ authMode === 'signin' ? 'Sign in' : authMode === 'signup' ? 'Create account' : authMode === 'forgot' ? 'Reset password' : 'Choose a new password' }}</h2>
-        <form @submit.prevent="submitAuth">
-          <label v-if="authMode === 'signup'">Display name<input v-model="displayName" autocomplete="nickname" maxlength="40" required /></label>
-          <label v-if="authMode !== 'updatePassword'">Email<input v-model="email" type="email" autocomplete="email" required /></label>
-          <label v-if="authMode !== 'forgot'">Password<input v-model="password" type="password" :autocomplete="authMode === 'signin' ? 'current-password' : 'new-password'" minlength="6" required /></label>
-          <label v-if="authMode === 'signup' || authMode === 'updatePassword'">Confirm password<input v-model="confirmPassword" type="password" autocomplete="new-password" minlength="6" required /></label>
-          <p v-if="authErrorMessage" class="form-error" role="alert">{{ authErrorMessage }}</p>
-          <p v-if="authNotice" class="auth-notice" role="status">{{ authNotice }}</p>
-          <button class="button button-lime submit-button" :disabled="authBusy">{{ authBusy ? 'Please wait…' : authMode === 'signin' ? 'Sign in' : authMode === 'signup' ? 'Create account' : authMode === 'forgot' ? 'Send reset link' : 'Update password' }}</button>
-        </form>
-        <button v-if="authMode === 'signin'" class="mode-switch" :disabled="authBusy" @click="authMode = 'forgot'; authErrorMessage = ''; authNotice = ''">Forgot password?</button>
-        <button
-          v-if="confirmationPending && authMode === 'signin'"
-          class="mode-switch"
-          :disabled="authBusy"
-          @click="resendConfirmation"
-        >{{ authBusy ? 'Sending…' : 'Resend confirmation email' }}</button>
-        <button v-if="authMode !== 'updatePassword'" class="mode-switch" :disabled="authBusy" @click="authMode = authMode === 'signup' || authMode === 'forgot' ? 'signin' : 'signup'; authErrorMessage = ''; authNotice = ''">
-          {{ authMode === 'signup' ? 'Already have an account? Sign in' : authMode === 'signin' ? 'New to the board? Create an account' : 'Back to sign in' }}
+        <h2 id="auth-title">Sign in</h2>
+        <p class="auth-description">Sign in or create an account with Google.</p>
+        <p v-if="authErrorMessage" class="form-error" role="alert">{{ authErrorMessage }}</p>
+        <button class="button google-signin-button" :disabled="authBusy" @click="signInWithGoogle">
+          <svg aria-hidden="true" viewBox="0 0 48 48">
+            <path fill="#4285F4" d="M48 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h13.52c-.59 2.96-2.26 5.48-4.81 7.18l7.75 6.02C44.98 37.77 48 31.7 48 24.55Z" />
+            <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.91-5.78l-7.75-6.02c-2.15 1.45-4.89 2.3-8.16 2.3-6.27 0-11.59-4.23-13.49-9.91l-8.01 6.19C6.48 42.62 14.62 48 24 48Z" />
+            <path fill="#FBBC05" d="M10.51 28.59A14.4 14.4 0 0 1 9.75 24c0-1.59.27-3.13.76-4.59L2.5 13.22A23.9 23.9 0 0 0 0 24c0 3.88.93 7.56 2.56 10.78l7.95-6.19Z" />
+            <path fill="#EA4335" d="M24 9.5c3.54 0 6.72 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.48 5.38 2.56 13.22l7.95 6.19C12.41 13.73 17.73 9.5 24 9.5Z" />
+          </svg>
+          {{ authBusy ? 'Connecting…' : 'Continue with Google' }}
         </button>
       </section>
     </div>

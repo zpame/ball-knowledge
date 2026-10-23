@@ -157,16 +157,12 @@ tbody tr.current-player { background: #20251a; }
 .auth-modal { width: min(100%, 380px); position: relative; padding: 26px; border: 1px solid #454941; border-radius: 8px; background: #191b18; }
 .modal-close { position: absolute; top: 8px; right: 12px; border: 0; background: transparent; color: #aeb2a8; font-size: 22px; cursor: pointer; }
 .auth-modal h2 { margin: 0 0 20px; font-size: 22px; font-weight: 650; letter-spacing: -.03em; }
-.auth-modal form { display: grid; gap: 13px; }
-.auth-modal label { display: grid; gap: 6px; color: #aeb2a8; font-size: 11px; }
-.auth-modal input { width: 100%; padding: 10px; border: 1px solid #3b4136; border-radius: 4px; outline: 0; background: #10120f; color: #f2f3ec; font-size: 13px; }
-.auth-modal input:focus { border-color: var(--accent); }
+.auth-description { margin: -8px 0 18px; color: var(--muted); font-size: 13px; line-height: 1.5; }
 .form-error { margin: 0; color: #ffc4b5; font-size: 12px; }
-.auth-notice { margin: 0; color: var(--accent); font-size: 12px; }
-.submit-button { width: 100%; margin-top: 3px; }
-.mode-switch { display: block; margin: 16px auto 0; border: 0; background: none; color: #a8ad9f; font-size: 11px; cursor: pointer; }
-.mode-switch:disabled { cursor: wait; opacity: .65; }
-.mode-switch:hover { color: var(--accent); }
+.google-signin-button { width: 100%; min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 11px; border: 1px solid #d0d3d8; border-radius: 5px; background: #fff; color: #25282c; font-size: 14px; }
+.google-signin-button:hover:not(:disabled) { background: #f2f4f7; }
+.google-signin-button:disabled { cursor: wait; opacity: .7; }
+.google-signin-button svg { width: 18px; height: 18px; }
 
 @media (max-width: 760px) {
   .game-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
