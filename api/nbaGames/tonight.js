@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 
+// Hex codes for each NBA team color
 const TEAM_COLORS = {
   ATL: '#E03A3E',
   BOS: '#007A33',
@@ -33,6 +34,7 @@ const TEAM_COLORS = {
   WAS: '#002B5C',
 }
 
+// Creates the eastern time instance
 function easternDate(date) {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York',
@@ -44,6 +46,7 @@ function easternDate(date) {
   return `${values.year}-${values.month}-${values.day}`
 }
 
+// Returns the time intervals for the games to be seperated by based on the current day
 function recentDates(today) {
   const [year, month, day] = today.split('-').map(Number)
   const base = new Date(Date.UTC(year, month - 1, day, 12))
@@ -54,6 +57,7 @@ function recentDates(today) {
   })
 }
 
+// Sets the visuals for each game based on the BDL API response
 function teamsFromGames(games) {
   const teams = new Map()
   for (const game of games) {
@@ -69,18 +73,21 @@ function teamsFromGames(games) {
   return [...teams.values()]
 }
 
+// Check if the cache is updated
 function cacheIsFresh(cache, date) {
   if (!cache?.payload || !cache.last_requested_at) return false
   if (cache.payload.date !== date) return false
   return Date.now() - new Date(cache.last_requested_at).getTime() < 60_000
 }
 
+// Get the cached data from BDL API
 function sendPayload(res, payload, cacheStatus) {
   res.setHeader('Cache-Control', 'no-store')
   res.setHeader('X-NBA-Cache', cacheStatus)
   return res.status(200).json(payload)
 }
 
+// Read the cache
 async function readCache(supabase) {
   const { data, error } = await supabase
     .from('nba_games_cache')
