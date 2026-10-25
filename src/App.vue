@@ -491,12 +491,7 @@ onMounted(async () => {
     window.history.replaceState(null, document.title, `${window.location.pathname}${search ? `?${search}` : ''}`)
   }
 
-  await loadGames()
-  gameRefreshInterval = window.setInterval(() => void loadGames(), 60_000)
   if (supabase) {
-    const { data } = await supabase.auth.getSession()
-    user.value = data.session?.user ?? null
-    if (user.value) void checkUsernameSetup()
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       user.value = session?.user ?? null
       if (!user.value) {
@@ -511,6 +506,9 @@ onMounted(async () => {
     })
     authSubscription = listener.subscription
   }
+
+  await loadGames()
+  gameRefreshInterval = window.setInterval(() => void loadGames(), 60_000)
   await Promise.all([loadAccountData(), loadLeaders()])
 })
 
