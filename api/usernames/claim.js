@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { Filter } from 'bad-words'
+import { clientIpKey, consumeRateLimit, rejectRateLimit } from '../_lib/rateLimit.js'
 
 const profanityFilter = new Filter()
 const usernamePattern = /^[A-Za-z0-9][A-Za-z0-9 ._-]{1,18}[A-Za-z0-9]$/
@@ -32,14 +33,45 @@ export default async function handler(req, res) {
     return sendJson(res, 500, { error: 'username_service_not_configured' })
   }
 
+  let supabase
+  try {
+    supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { persistSession: false },
+    })
+    const ipKey = clientIpKey(req)
+    if (!await consumeRateLimit(supabase, `username:ip:${ipKey}`, 30, 600)) {
+      return rejectRateLimit(res, 600)
+    }
+  } catch (error) {
+    console.error('Could not apply username rate limit:', error)
+    return sendJson(res, 500, { error: 'username_service_unavailable' })
+  }
+
   const authorization = req.headers.authorization
   const accessToken = authorization?.match(/^Bearer\s+(.+)$/i)?.[1]
   if (!accessToken) return sendJson(res, 401, { error: 'not_authenticated' })
+
+  let authData
+  try {
+    const { data, error } = await supabase.auth.getUser(accessToken)
+    if (error || !data.user) return sendJson(res, 401, { error: 'not_authenticated' })
+    authData = data
+    if (!await consumeRateLimit(supabase, `username:user:${authData.user.id}`, 10, 600)) {
+      return rejectRateLimit(res, 600)
+    }
+  } catch (error) {
+    console.error('Could not validate username request:', error)
+    return sendJson(res, 500, { error: 'username_service_unavailable' })
+  }
 
   let body
   try {
     body = await readBody(req)
   } catch {
+    return sendJson(res, 400, { error: 'invalid_request_body' })
+  }
+
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return sendJson(res, 400, { error: 'invalid_request_body' })
   }
 
@@ -52,12 +84,6 @@ export default async function handler(req, res) {
   }
 
   try {
-    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-      auth: { persistSession: false },
-    })
-    const { data: authData, error: authError } = await supabase.auth.getUser(accessToken)
-    if (authError || !authData.user) return sendJson(res, 401, { error: 'not_authenticated' })
-
     const { data, error } = await supabase.rpc('claim_username', {
       p_user_id: authData.user.id,
       p_username: username,

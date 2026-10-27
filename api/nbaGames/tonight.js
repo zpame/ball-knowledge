@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { clientIpKey, consumeRateLimit, rejectRateLimit } from '../_lib/rateLimit.js'
 
 // Hex codes for each NBA team color
 const TEAM_COLORS = {
@@ -118,6 +119,11 @@ export default async function handler(req, res) {
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
       auth: { persistSession: false },
     })
+    const ipKey = clientIpKey(req)
+    if (!await consumeRateLimit(supabase, `games:ip:${ipKey}`, 60, 60)) {
+      return rejectRateLimit(res, 60)
+    }
+
     let cache = await readCache(supabase)
     if (cacheIsFresh(cache, date)) return sendPayload(res, cache.payload, 'HIT')
 

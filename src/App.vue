@@ -239,23 +239,44 @@ async function selectTeam(game: Game, team: Team) {
   submittingGame.value = game.id
   errorMessage.value = ''
   noticeMessage.value = ''
-  const { data, error } = await supabase.rpc('make_pick', {
-    p_game_id: game.id,
-    p_picked_team_id: team.id,
-  })
-  if (error) {
-    errorMessage.value = error.message
-  } else if (data) {
-    const updatedPick = data as Pick
+  try {
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
+    if (sessionError) throw sessionError
+    if (!sessionData.session) {
+      errorMessage.value = 'Your sign-in expired. Sign in with Google again.'
+      return
+    }
+
+    const response = await fetch('/api/picks/submit', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${sessionData.session.access_token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ game_id: game.id, picked_team_id: team.id }),
+    })
+    const payload = await response.json()
+    if (!response.ok) {
+      const messages: Record<string, string> = {
+        not_authenticated: 'Your sign-in expired. Sign in with Google again.',
+        rate_limited: 'You’re making picks too quickly. Please wait a minute and try again.',
+        pick_locked: 'This game locked at tip-off. Picks cannot be changed after the game starts.',
+      }
+      errorMessage.value = messages[payload.error] || 'Your pick could not be saved. Please try again.'
+      return
+    }
+
+    const updatedPick = payload as Pick
     picks.value = [
       ...picks.value.filter((pick) => pick.game_id !== game.id),
       updatedPick,
     ]
-    noticeMessage.value = `Pick saved: ${team.abbreviation}. You can change it until tip-off.`
-  } else {
-    errorMessage.value = 'Your pick could not be confirmed. Refresh and try again.'
+    noticeMessage.value = `Pick saved: ${team.abbreviation}. You can change it until tip-off; after the listed start time, picks are locked.`
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : 'Your pick could not be saved. Please try again.'
+  } finally {
+    submittingGame.value = null
   }
-  submittingGame.value = null
 }
 
 function openAuth() {
@@ -355,6 +376,7 @@ async function saveUsername() {
         username_profanity: 'Please choose a username without profanity.',
         username_taken: 'That username is already taken. Try another one.',
         not_authenticated: 'Your sign-in expired. Sign in with Google again.',
+        rate_limited: 'You’re making username changes too quickly. Please wait a few minutes and try again.',
       }
       if (payload.error === 'username_cooldown' && payload.next_available_at) {
         usernameNextChangeAt.value = payload.next_available_at
@@ -594,7 +616,7 @@ onUnmounted(() => {
       </section>
 
       <section v-else-if="activePage === 'games'" class="section games-section">
-        <div class="section-heading"><div><h1>Games</h1><p class="page-subtitle">Recent and upcoming games · Eastern time</p></div></div>
+        <div class="section-heading"><div><h1>Games</h1><p class="page-subtitle">Recent and upcoming games · Eastern time. Picks lock at the listed tip-off and cannot be changed afterward.</p></div></div>
         <div v-if="loadingGames" class="empty-state">Loading games…</div>
         <div v-else-if="games.length === 0" class="empty-state">No recent or upcoming games.</div>
         <div v-else class="game-days">
@@ -616,7 +638,8 @@ onUnmounted(() => {
                   <div class="team-row"><div class="team-copy"><strong>{{ game.home_team.abbreviation }}</strong><span>{{ teamName(game.home_team) }}</span></div><span v-if="game.home_team_score !== null" class="team-score">{{ game.home_team_score }}</span></div>
                 </div>
                 <div v-if="pickResult(game)" class="pick-result" :class="`pick-result-${pickResult(game)}`">{{ pickResult(game) === 'correct' ? 'Correct pick' : 'Incorrect pick' }}</div>
-                <div v-else-if="pickedTeam(game)" class="saved-tag">Pick saved</div>
+                <div v-else-if="isLocked(game)" class="saved-tag">Locked at tip-off · picks cannot be changed</div>
+                <div v-else-if="pickedTeam(game)" class="saved-tag">Pick saved · change it before {{ gameTime(game) }} ET</div>
                 <div class="pick-actions">
                   <button class="pick-button" :class="[`team-pick-${game.visitor_team.abbreviation}`, { selected: pickedTeam(game) === game.visitor_team.id }, pickedTeam(game) === game.visitor_team.id && pickResult(game) ? `result-${pickResult(game)}` : '']" :disabled="isLocked(game) || submittingGame === game.id" @click="selectTeam(game, game.visitor_team)">
                     {{ game.visitor_team.abbreviation }} <span>{{ pickedTeam(game) === game.visitor_team.id ? (pickResult(game) === 'correct' ? 'Correct' : pickResult(game) === 'incorrect' ? 'Incorrect' : 'Picked') : '' }}</span>
