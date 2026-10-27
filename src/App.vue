@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { supabase, supabaseConfigured } from './lib/supabase'
 import type { User } from '@supabase/supabase-js'
+import { inject } from '@vercel/analytics'
 
 type Team = {
   id: number
@@ -42,6 +43,9 @@ type LeaderboardEntry = {
 }
 
 type LeaderboardPeriod = 'week' | 'season' | 'all_time'
+
+// Initialize Vercel Web Analytics
+inject()
 
 const games = ref<Game[]>([])
 const slateDate = ref('')
